@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "LeetLens",
+  "description": "Automatically capture failed LeetCode submissions and turn them into a reviewable mistake notebook.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "LeetLens",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://leetcode.com/problems/*"],
+      "js": ["pageNetworkBridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://leetcode.com/problems/*"],
+      "js": ["contentScript.js"],
+      "css": ["contentScript.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["storage"],
+  "host_permissions": ["https://leetcode.com/*"]
+}
