@@ -1,5 +1,5 @@
 import { db } from "../schema";
-import { startOfWeek } from "../../utils/date";
+import { endOfToday, startOfWeek } from "../../utils/date";
 
 export type DashboardSummary = {
   dueTodayCount: number;
@@ -10,7 +10,7 @@ export type DashboardSummary = {
 };
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
-  const now = new Date().toISOString();
+  const todayEnd = endOfToday().toISOString();
   const weekStart = startOfWeek().toISOString();
   const [reviewStates, mistakes, problems] = await Promise.all([
     db.reviewStates.toArray(),
@@ -19,7 +19,10 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   ]);
 
   const dueTodayCount = reviewStates.filter(
-    (reviewState) => reviewState.status !== "mastered" && reviewState.nextReviewAt <= now
+    (reviewState) =>
+      reviewState.status !== "mastered" &&
+      reviewState.status !== "paused" &&
+      reviewState.nextReviewAt <= todayEnd
   ).length;
   const newMistakesThisWeekCount = mistakes.filter((mistake) => mistake.createdAt >= weekStart).length;
   const reasonCounts = new Map<string, number>();

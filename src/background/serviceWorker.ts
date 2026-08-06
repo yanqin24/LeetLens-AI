@@ -2,6 +2,8 @@ import {
   captureFailedSubmission,
   discardCapturedSubmission,
   getDashboardSummary,
+  markReviewTaskDone,
+  markReviewTaskFailed,
   updateMistakeReason,
   updateReviewAfterResult
 } from "../shared/db";
@@ -48,6 +50,12 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
         message.payload.result,
         message.payload.note
       );
+
+    case "MARK_REVIEW_TASK_DONE":
+      return markReviewTaskDone(message.payload);
+
+    case "MARK_REVIEW_TASK_FAILED":
+      return markReviewTaskFailed(message.payload);
 
     case "CLEAR_ALL_DATA":
       await db.delete();

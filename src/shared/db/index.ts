@@ -1,6 +1,9 @@
 export { db } from "./schema";
 export * from "./repositories/captureRepository";
 export * from "./repositories/dashboardRepository";
+export * from "./repositories/demoDataRepository";
 export * from "./repositories/mistakeRepository";
+export * from "./repositories/portableDataRepository";
 export * from "./repositories/problemRepository";
 export * from "./repositories/reviewRepository";
+export * from "./repositories/reviewTaskRepository";

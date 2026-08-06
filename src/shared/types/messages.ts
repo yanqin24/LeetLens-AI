@@ -42,6 +42,22 @@ export type UpdateReviewStateMessage = {
   };
 };
 
+export type MarkReviewTaskDoneMessage = {
+  type: "MARK_REVIEW_TASK_DONE";
+  payload: {
+    taskId: string;
+    problemId: string;
+  };
+};
+
+export type MarkReviewTaskFailedMessage = {
+  type: "MARK_REVIEW_TASK_FAILED";
+  payload: {
+    taskId: string;
+    problemId: string;
+  };
+};
+
 export type ClearAllDataMessage = {
   type: "CLEAR_ALL_DATA";
 };
@@ -52,6 +68,8 @@ export type ExtensionMessage =
   | DiscardCapturedSubmissionMessage
   | GetDashboardSummaryMessage
   | UpdateReviewStateMessage
+  | MarkReviewTaskDoneMessage
+  | MarkReviewTaskFailedMessage
   | ClearAllDataMessage;
 
 export type CaptureFailedSubmissionResponse = {

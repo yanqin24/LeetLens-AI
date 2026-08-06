@@ -22,10 +22,29 @@ const FAILED_RESULTS: SubmissionResult[] = [
   "Runtime Error",
   "Compile Error"
 ];
+const SUBMISSION_RESULTS: SubmissionResult[] = [...FAILED_RESULTS, "Accepted"];
 const NETWORK_INTENT_MESSAGE = "__LEETLENS_NETWORK_INTENT__";
+const NETWORK_RESULT_MESSAGE = "__LEETLENS_SUBMISSION_RESULT__";
 const PANEL_ROOT_ID = "leetlens-root";
+const ACTIVE_REVIEW_TASK_KEY = "leetlens.activeReviewTask";
 const FINGERPRINT_DEDUPE_WINDOW_MS = 10 * 60_000;
 const SUBMIT_CAPTURE_WINDOW_MS = 30_000;
+
+type ActiveReviewTask = {
+  taskId: string;
+  planId: string;
+  problemId: string;
+  problemSlug: string;
+  scheduledFor: string;
+  openedAt: string;
+};
+
+type SubmissionState = {
+  result: SubmissionResult;
+  errorMessage: string;
+  signature: string;
+  source: "dom" | "network";
+};
 
 let lastFingerprint = "";
 let lastFingerprintAt = 0;
@@ -55,7 +74,7 @@ function observeSubmissionResults(): void {
       return;
     }
 
-    void tryCaptureLatestFailure();
+    void tryHandleLatestSubmissionResult();
   });
 
   observer.observe(document.body, {
@@ -67,8 +86,8 @@ function observeSubmissionResults(): void {
 
 function rememberCurrentResultAsBaseline(): void {
   window.setTimeout(() => {
-    const currentFailure = detectFailureState();
-    lastResultSignature = currentFailure?.signature ?? "";
+    const currentState = detectSubmissionStateFromDom();
+    lastResultSignature = currentState?.signature ?? "";
   }, 500);
 }
 
@@ -79,6 +98,16 @@ function observeNetworkIntents(): void {
     }
 
     const data = event.data;
+
+    if (isNetworkSubmissionResultMessage(data)) {
+      void handleSubmissionState({
+        result: data.result,
+        errorMessage: data.errorMessage || data.result,
+        signature: `${data.result}|${data.errorMessage || data.result}`,
+        source: "network"
+      });
+      return;
+    }
 
     if (!isNetworkIntentMessage(data)) {
       return;
@@ -92,6 +121,24 @@ function observeNetworkIntents(): void {
     disarmSubmitCapture();
     rememberCurrentResultAsBaseline();
   });
+}
+
+function isNetworkSubmissionResultMessage(value: unknown): value is {
+  type: typeof NETWORK_RESULT_MESSAGE;
+  result: SubmissionResult;
+  errorMessage?: string;
+} {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybeMessage = value as { type?: unknown; result?: unknown };
+
+  return (
+    maybeMessage.type === NETWORK_RESULT_MESSAGE &&
+    typeof maybeMessage.result === "string" &&
+    SUBMISSION_RESULTS.includes(maybeMessage.result as SubmissionResult)
+  );
 }
 
 function isNetworkIntentMessage(value: unknown): value is {
@@ -192,31 +239,47 @@ function isCurrentSubmitHandled(): boolean {
   return submitSequence > 0 && submitSequence === handledSubmitSequence;
 }
 
-async function tryCaptureLatestFailure(): Promise<void> {
+async function tryHandleLatestSubmissionResult(): Promise<void> {
   if (captureInFlight || isCurrentSubmitHandled() || document.getElementById(PANEL_ROOT_ID)) {
     return;
   }
 
-  const failureState = detectFailureState();
+  const submissionState = detectSubmissionStateFromDom();
 
-  if (!failureState) {
+  if (!submissionState) {
     return;
   }
 
-  const submitArmed = isSubmitCaptureArmed();
+  await handleSubmissionState(submissionState);
+}
 
-  if (!submitArmed) {
-    lastResultSignature = failureState.signature;
+async function handleSubmissionState(submissionState: SubmissionState): Promise<void> {
+  if (captureInFlight || isCurrentSubmitHandled() || document.getElementById(PANEL_ROOT_ID)) {
     return;
   }
 
-  lastResultSignature = failureState.signature;
+  if (!isSubmitCaptureArmed()) {
+    lastResultSignature = submissionState.signature;
+    return;
+  }
 
-  const result = failureState.result;
+  if (submissionState.source === "dom" && submissionState.signature === lastResultSignature) {
+    return;
+  }
+
+  lastResultSignature = submissionState.signature;
+
+  if (submissionState.result === "Accepted") {
+    await completeActiveReviewTaskIfMatched();
+    markCurrentSubmitHandled();
+    return;
+  }
+
+  const result = submissionState.result;
   const problem = extractProblemMetadata();
   const language = extractLanguage();
   const codeResult = extractCode();
-  const errorMessage = failureState.errorMessage;
+  const errorMessage = submissionState.errorMessage;
   const fingerprint = await createAttemptFingerprint({
     problemSlug: problem.slug,
     result,
@@ -224,6 +287,8 @@ async function tryCaptureLatestFailure(): Promise<void> {
     code: codeResult.code,
     errorMessage
   });
+
+  await failActiveReviewTaskIfMatched();
 
   if (isDuplicateFingerprint(fingerprint)) {
     markCurrentSubmitHandled();
@@ -271,21 +336,11 @@ function isProblemPage(): boolean {
   return location.hostname === "leetcode.com" && location.pathname.startsWith("/problems/");
 }
 
-function detectSubmissionResult(): SubmissionResult | undefined {
+function detectSubmissionStateFromDom(): SubmissionState | undefined {
   const pageText = document.body.innerText;
-  return FAILED_RESULTS.find((result) => pageText.includes(result));
-}
+  const result = SUBMISSION_RESULTS.find((candidate) => pageText.includes(candidate));
 
-function detectFailureState():
-  | {
-      result: Exclude<SubmissionResult, "Accepted">;
-      errorMessage: string;
-      signature: string;
-    }
-  | undefined {
-  const result = detectSubmissionResult();
-
-  if (!result || result === "Accepted") {
+  if (!result) {
     return undefined;
   }
 
@@ -294,8 +349,65 @@ function detectFailureState():
   return {
     result,
     errorMessage,
-    signature: `${result}|${errorMessage}`
+    signature: `${result}|${errorMessage}`,
+    source: "dom"
   };
+}
+
+async function completeActiveReviewTaskIfMatched(): Promise<void> {
+  const activeTask = await getActiveReviewTask();
+
+  if (!activeTask) {
+    return;
+  }
+
+  const currentSlug = location.pathname.split("/").filter(Boolean)[1] ?? "";
+
+  if (activeTask.problemSlug !== currentSlug) {
+    return;
+  }
+
+  await chrome.runtime.sendMessage({
+    type: "MARK_REVIEW_TASK_DONE",
+    payload: {
+      taskId: activeTask.taskId,
+      problemId: activeTask.problemId
+    }
+  });
+  await chrome.storage.local.remove(ACTIVE_REVIEW_TASK_KEY);
+}
+
+async function failActiveReviewTaskIfMatched(): Promise<void> {
+  const activeTask = await getActiveReviewTask();
+
+  if (!activeTask) {
+    return;
+  }
+
+  const currentSlug = location.pathname.split("/").filter(Boolean)[1] ?? "";
+
+  if (activeTask.problemSlug !== currentSlug) {
+    return;
+  }
+
+  await chrome.runtime.sendMessage({
+    type: "MARK_REVIEW_TASK_FAILED",
+    payload: {
+      taskId: activeTask.taskId,
+      problemId: activeTask.problemId
+    }
+  });
+}
+
+async function getActiveReviewTask(): Promise<ActiveReviewTask | undefined> {
+  const stored = await chrome.storage.local.get(ACTIVE_REVIEW_TASK_KEY);
+  const value = stored[ACTIVE_REVIEW_TASK_KEY];
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  return value as ActiveReviewTask;
 }
 
 function extractProblemMetadata() {
@@ -564,3 +676,5 @@ function escapeHtml(value: string): string {
   element.textContent = value;
   return element.innerHTML;
 }
+
+export {};
