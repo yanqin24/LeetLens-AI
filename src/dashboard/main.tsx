@@ -6,14 +6,20 @@ import {
   Download,
   ListChecks,
   NotebookTabs,
+  Archive,
+  Pencil,
   PieChart,
+  Plus,
   RefreshCw,
+  Settings2,
   Target,
+  Trash2,
   Upload
 } from "lucide-react";
 import { seedDemoData } from "../shared/db/repositories/demoDataRepository";
 import { exportPortableData, importPortableData } from "../shared/db/repositories/portableDataRepository";
 import { db } from "../shared/db/schema";
+import { createId } from "../shared/utils/ids";
 import type { SubmissionAttempt } from "../shared/types/attempt";
 import type { MistakeRecord } from "../shared/types/mistake";
 import type { Problem } from "../shared/types/problem";
@@ -127,9 +133,24 @@ function DashboardApp(): JSX.Element {
       .sort((a, b) => sortNotebookRows(a, b, sortBy));
   }, [difficultyFilter, problemSummaries, reasonFilter, sortBy, topicFilter]);
 
+  const activeReviewPlans = useMemo(() => {
+    return data.reviewPlans.filter((plan) => plan.active);
+  }, [data.reviewPlans]);
+
   const selectedPlan = useMemo(() => {
-    return data.reviewPlans.find((plan) => plan.id === selectedPlanId) ?? data.reviewPlans[0];
-  }, [data.reviewPlans, selectedPlanId]);
+    return activeReviewPlans.find((plan) => plan.id === selectedPlanId) ?? activeReviewPlans[0];
+  }, [activeReviewPlans, selectedPlanId]);
+
+  useEffect(() => {
+    if (!selectedPlanId && activeReviewPlans.length) {
+      setSelectedPlanId(activeReviewPlans[0].id);
+      return;
+    }
+
+    if (selectedPlanId && activeReviewPlans.length && !activeReviewPlans.some((plan) => plan.id === selectedPlanId)) {
+      setSelectedPlanId(activeReviewPlans[0].id);
+    }
+  }, [activeReviewPlans, selectedPlanId]);
 
   const planDates = useMemo(() => getPlanDates(data.reviewTasks, selectedPlan?.id), [
     data.reviewTasks,
@@ -164,8 +185,10 @@ function DashboardApp(): JSX.Element {
 
     setData({ problems, attempts, mistakes, reviewStates, reviewPlans, reviewTasks });
 
-    if (!selectedPlanId && reviewPlans.length) {
-      setSelectedPlanId(reviewPlans[0].id);
+    const activePlans = reviewPlans.filter((plan) => plan.active);
+
+    if (!selectedPlanId && activePlans.length) {
+      setSelectedPlanId(activePlans[0].id);
     }
   }
 
@@ -210,6 +233,126 @@ function DashboardApp(): JSX.Element {
     } finally {
       setDataActionBusy(false);
     }
+  }
+
+  async function handleCreatePlan(name: string): Promise<void> {
+    const trimmedName = name.trim();
+
+    if (!trimmedName) {
+      setDataActionMessage("Plan name is required.");
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const plan: ReviewPlan = {
+      id: createId("review_plan"),
+      name: trimmedName,
+      type: "custom",
+      description: "Custom review plan.",
+      active: true,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    await db.reviewPlans.add(plan);
+    setSelectedPlanId(plan.id);
+    setActiveTab("plans");
+    setDataActionMessage(`Created plan "${plan.name}".`);
+    await loadDashboard();
+  }
+
+  async function handleRenamePlan(planId: string, name: string): Promise<void> {
+    const trimmedName = name.trim();
+
+    if (!planId || !trimmedName) {
+      setDataActionMessage("Choose a plan and enter a new name.");
+      return;
+    }
+
+    await db.reviewPlans.update(planId, {
+      name: trimmedName,
+      updatedAt: new Date().toISOString()
+    });
+    setDataActionMessage(`Renamed plan to "${trimmedName}".`);
+    await loadDashboard();
+  }
+
+  async function handleSetPlanActive(planId: string, active: boolean): Promise<void> {
+    await db.reviewPlans.update(planId, {
+      active,
+      updatedAt: new Date().toISOString()
+    });
+
+    if (!active && selectedPlanId === planId) {
+      const nextPlan = data.reviewPlans.find((plan) => plan.active && plan.id !== planId);
+      setSelectedPlanId(nextPlan?.id ?? "");
+    }
+
+    if (active) {
+      setSelectedPlanId(planId);
+    }
+
+    setDataActionMessage(active ? "Restored review plan." : "Archived review plan.");
+    await loadDashboard();
+  }
+
+  async function handleAddProblemToPlan(input: {
+    problemId: string;
+    planId: string;
+    scheduledFor: string;
+    latestAttemptId?: string;
+  }): Promise<void> {
+    if (!input.planId) {
+      setDataActionMessage("Choose a review plan first.");
+      return;
+    }
+
+    if (!input.scheduledFor) {
+      setDataActionMessage("Choose a review date first.");
+      return;
+    }
+
+    const scheduledFor = dateKeyToIso(input.scheduledFor);
+    const existingTask = await db.reviewTasks
+      .filter(
+        (task) =>
+          task.planId === input.planId &&
+          task.problemId === input.problemId &&
+          toDateKey(new Date(task.scheduledFor)) === input.scheduledFor
+      )
+      .first();
+    const now = new Date().toISOString();
+
+    if (existingTask) {
+      await db.reviewTasks.update(existingTask.id, {
+        status: "todo",
+        scheduledFor,
+        latestAttemptId: input.latestAttemptId,
+        updatedAt: now
+      });
+    } else {
+      await db.reviewTasks.add({
+        id: createId("review_task"),
+        planId: input.planId,
+        problemId: input.problemId,
+        scheduledFor,
+        status: "todo",
+        source: "manual",
+        latestAttemptId: input.latestAttemptId,
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+
+    const planName = data.reviewPlans.find((plan) => plan.id === input.planId)?.name ?? "review plan";
+    setDataActionMessage(`Added problem to ${planName} on ${formatDateTab(input.scheduledFor)}.`);
+    await loadDashboard();
+  }
+
+  async function handleRemoveTask(taskId: string): Promise<void> {
+    await db.reviewTasks.delete(taskId);
+    setDataActionMessage("Removed review task.");
+    await loadDashboard();
   }
 
   if (route.name === "detail") {
@@ -261,6 +404,7 @@ function DashboardApp(): JSX.Element {
 
       {activeTab === "notebook" ? (
         <MistakeNotebook
+          plans={activeReviewPlans}
           rows={notebookRows}
           sortBy={sortBy}
           reasonFilter={reasonFilter}
@@ -268,6 +412,9 @@ function DashboardApp(): JSX.Element {
           topicFilter={topicFilter}
           reasonOptions={reasonOptions}
           topicOptions={topicOptions}
+          selectedPlanId={selectedPlan?.id ?? ""}
+          selectedDate={selectedDate}
+          onAddToPlan={(input) => void handleAddProblemToPlan(input)}
           onSortChange={setSortBy}
           onReasonChange={setReasonFilter}
           onDifficultyChange={setDifficultyFilter}
@@ -275,11 +422,16 @@ function DashboardApp(): JSX.Element {
         />
       ) : (
         <ReviewPlans
+          activePlans={activeReviewPlans}
           plans={data.reviewPlans}
           selectedPlan={selectedPlan}
           selectedDate={selectedDate}
           dates={planDates}
           taskRows={taskRows}
+          onCreatePlan={(name) => void handleCreatePlan(name)}
+          onRenamePlan={(planId, name) => void handleRenamePlan(planId, name)}
+          onRemoveTask={(taskId) => void handleRemoveTask(taskId)}
+          onSetPlanActive={(planId, active) => void handleSetPlanActive(planId, active)}
           onTaskOpened={() => void loadDashboard()}
           onPlanChange={setSelectedPlanId}
           onDateChange={setSelectedDate}
@@ -382,6 +534,7 @@ function InsightCard({ insight }: { insight: Insight }): JSX.Element {
 }
 
 function MistakeNotebook({
+  plans,
   rows,
   sortBy,
   reasonFilter,
@@ -389,11 +542,15 @@ function MistakeNotebook({
   topicFilter,
   reasonOptions,
   topicOptions,
+  selectedPlanId,
+  selectedDate,
+  onAddToPlan,
   onSortChange,
   onReasonChange,
   onDifficultyChange,
   onTopicChange
 }: {
+  plans: ReviewPlan[];
   rows: ProblemSummary[];
   sortBy: NotebookSort;
   reasonFilter: string;
@@ -401,11 +558,45 @@ function MistakeNotebook({
   topicFilter: string;
   reasonOptions: string[];
   topicOptions: string[];
+  selectedPlanId: string;
+  selectedDate: string;
+  onAddToPlan: (input: {
+    problemId: string;
+    planId: string;
+    scheduledFor: string;
+    latestAttemptId?: string;
+  }) => void;
   onSortChange: (value: NotebookSort) => void;
   onReasonChange: (value: string) => void;
   onDifficultyChange: (value: string) => void;
   onTopicChange: (value: string) => void;
 }): JSX.Element {
+  const [targetPlanId, setTargetPlanId] = useState(selectedPlanId);
+  const [targetDate, setTargetDate] = useState(selectedDate);
+  const [pendingRow, setPendingRow] = useState<ProblemSummary | undefined>();
+
+  useEffect(() => {
+    if (!targetPlanId && selectedPlanId) {
+      setTargetPlanId(selectedPlanId);
+    }
+  }, [selectedPlanId, targetPlanId]);
+
+  function handleAddSubmit(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+
+    if (!pendingRow) {
+      return;
+    }
+
+    onAddToPlan({
+      problemId: pendingRow.problem.id,
+      planId: targetPlanId,
+      scheduledFor: targetDate,
+      latestAttemptId: pendingRow.latestAttempt?.id
+    });
+    setPendingRow(undefined);
+  }
+
   return (
     <section className="dashboard__panel">
       <div className="dashboard__sectionHeader">
@@ -482,38 +673,108 @@ function MistakeNotebook({
                 <td>{row.failureCount}</td>
                 <td>{formatDate(row.lastFailedAt)}</td>
                 <td>
-                  <a className="dashboard__tableLink" href={`#problem=${row.problem.id}`}>
-                    Detail
-                  </a>
+                  <div className="dashboard__rowActions">
+                    <a className="dashboard__tableLink" href={`#problem=${row.problem.id}`}>
+                      Detail
+                    </a>
+                    <button
+                      className="dashboard__ghostButton"
+                      disabled={!plans.length}
+                      type="button"
+                      onClick={() => setPendingRow(row)}
+                    >
+                      <Plus size={14} />
+                      Add
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {pendingRow ? (
+        <div className="dashboard__modalBackdrop" role="presentation">
+          <form className="dashboard__modal" onSubmit={handleAddSubmit}>
+            <div className="dashboard__modalHeader">
+              <div>
+                <p className="dashboard__eyebrow">Add to plan</p>
+                <h3>{pendingRow.problem.title}</h3>
+              </div>
+              <button
+                className="dashboard__ghostButton"
+                type="button"
+                onClick={() => setPendingRow(undefined)}
+              >
+                Cancel
+              </button>
+            </div>
+            <label>
+              Review plan
+              <select value={targetPlanId} onChange={(event) => setTargetPlanId(event.target.value)}>
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Review date
+              <input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} />
+            </label>
+            <div className="dashboard__modalActions">
+              <button className="dashboard__ghostButton" type="button" onClick={() => setPendingRow(undefined)}>
+                Cancel
+              </button>
+              <button className="dashboard__tableLink" disabled={!targetPlanId || !targetDate} type="submit">
+                <Plus size={14} />
+                Add
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function ReviewPlans({
+  activePlans,
   plans,
   selectedPlan,
   selectedDate,
   dates,
   taskRows,
+  onCreatePlan,
+  onRenamePlan,
+  onRemoveTask,
+  onSetPlanActive,
   onTaskOpened,
   onPlanChange,
   onDateChange
 }: {
+  activePlans: ReviewPlan[];
   plans: ReviewPlan[];
   selectedPlan?: ReviewPlan;
   selectedDate: string;
   dates: string[];
   taskRows: TaskRow[];
+  onCreatePlan: (name: string) => void;
+  onRenamePlan: (planId: string, name: string) => void;
+  onRemoveTask: (taskId: string) => void;
+  onSetPlanActive: (planId: string, active: boolean) => void;
   onTaskOpened: () => void;
   onPlanChange: (planId: string) => void;
   onDateChange: (date: string) => void;
 }): JSX.Element {
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [manageModalOpen, setManageModalOpen] = useState(false);
+  const [newPlanName, setNewPlanName] = useState("");
+  const [editingPlanId, setEditingPlanId] = useState("");
+  const [editingPlanName, setEditingPlanName] = useState("");
+
   async function openTask(task: ReviewTask, summary?: ProblemSummary): Promise<void> {
     if (!summary) {
       return;
@@ -543,24 +804,69 @@ function ReviewPlans({
     window.open(summary.problem.url, "_blank", "noopener,noreferrer");
   }
 
+  function handleCreatePlan(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+
+    if (!newPlanName.trim()) {
+      return;
+    }
+
+    onCreatePlan(newPlanName);
+    setNewPlanName("");
+    setCreateModalOpen(false);
+  }
+
+  function handleRenamePlan(event: React.FormEvent<HTMLFormElement>, planId: string): void {
+    event.preventDefault();
+
+    if (!editingPlanName.trim()) {
+      return;
+    }
+
+    onRenamePlan(planId, editingPlanName);
+    setEditingPlanId("");
+    setEditingPlanName("");
+  }
+
+  function startEditingPlan(plan: ReviewPlan): void {
+    setEditingPlanId(plan.id);
+    setEditingPlanName(plan.name);
+  }
+
   return (
     <section className="dashboard__panel">
-      <div className="dashboard__sectionHeader">
-        <div>
-          <p className="dashboard__eyebrow">Review Plans</p>
-          <h2>{selectedPlan?.name ?? "No plan selected"}</h2>
+      <div className="dashboard__reviewPlanHeader">
+        <div className="dashboard__reviewPlanPicker">
+          <label className="dashboard__primaryPlanSelect">
+            <span>Review plan</span>
+            <select
+              disabled={!activePlans.length}
+              value={selectedPlan?.id ?? ""}
+              onChange={(event) => onPlanChange(event.target.value)}
+            >
+              {activePlans.length ? (
+                activePlans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.name}
+                  </option>
+                ))
+              ) : (
+                <option value="">No active plans</option>
+              )}
+            </select>
+          </label>
           {selectedPlan?.description ? <p className="dashboard__sectionText">{selectedPlan.description}</p> : null}
         </div>
-        <label className="dashboard__planSelect">
-          Plan
-          <select value={selectedPlan?.id ?? ""} onChange={(event) => onPlanChange(event.target.value)}>
-            {plans.map((plan) => (
-              <option key={plan.id} value={plan.id}>
-                {plan.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="dashboard__planActions">
+          <button className="dashboard__ghostButton" type="button" onClick={() => setCreateModalOpen(true)}>
+            <Plus size={14} />
+            Create new plan
+          </button>
+          <button className="dashboard__ghostButton" type="button" onClick={() => setManageModalOpen(true)}>
+            <Settings2 size={14} />
+            Manage plans
+          </button>
+        </div>
       </div>
 
       <div className="dashboard__dateTabs" aria-label="Review dates">
@@ -603,17 +909,27 @@ function ReviewPlans({
                   </span>
                 </td>
                 <td>
-                  {summary?.problem.url ? (
+                  <div className="dashboard__rowActions">
+                    {summary?.problem.url ? (
+                      <button
+                        className="dashboard__tableLink"
+                        type="button"
+                        onClick={() => void openTask(task, summary)}
+                      >
+                        Go
+                      </button>
+                    ) : (
+                      "--"
+                    )}
                     <button
-                      className="dashboard__tableLink"
+                      className="dashboard__dangerButton"
                       type="button"
-                      onClick={() => void openTask(task, summary)}
+                      onClick={() => onRemoveTask(task.id)}
                     >
-                      Go
+                      <Trash2 size={14} />
+                      Remove
                     </button>
-                  ) : (
-                    "--"
-                  )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -623,6 +939,107 @@ function ReviewPlans({
           <EmptyState title="No tasks for this date" description="Choose another day or review plan." />
         ) : null}
       </div>
+
+      {createModalOpen ? (
+        <div className="dashboard__modalBackdrop" role="presentation">
+          <form className="dashboard__modal" onSubmit={handleCreatePlan}>
+            <div className="dashboard__modalHeader">
+              <div>
+                <p className="dashboard__eyebrow">Create plan</p>
+                <h3>New review plan</h3>
+              </div>
+              <button className="dashboard__ghostButton" type="button" onClick={() => setCreateModalOpen(false)}>
+                Cancel
+              </button>
+            </div>
+            <label>
+              Plan name
+              <input
+                autoFocus
+                placeholder="DP Sprint"
+                type="text"
+                value={newPlanName}
+                onChange={(event) => setNewPlanName(event.target.value)}
+              />
+            </label>
+            <div className="dashboard__modalActions">
+              <button className="dashboard__ghostButton" type="button" onClick={() => setCreateModalOpen(false)}>
+                Cancel
+              </button>
+              <button className="dashboard__tableLink" type="submit">
+                <Plus size={14} />
+                Create
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {manageModalOpen ? (
+        <div className="dashboard__modalBackdrop" role="presentation">
+          <section className="dashboard__modal dashboard__modal--wide">
+            <div className="dashboard__modalHeader">
+              <div>
+                <p className="dashboard__eyebrow">Manage plans</p>
+                <h3>Plan list</h3>
+              </div>
+              <button className="dashboard__ghostButton" type="button" onClick={() => setManageModalOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="dashboard__planList">
+              {plans.map((plan) => (
+                <div className="dashboard__planListItem" key={plan.id}>
+                  {editingPlanId === plan.id ? (
+                    <form className="dashboard__planEditForm" onSubmit={(event) => handleRenamePlan(event, plan.id)}>
+                      <input
+                        autoFocus
+                        type="text"
+                        value={editingPlanName}
+                        onChange={(event) => setEditingPlanName(event.target.value)}
+                      />
+                      <button className="dashboard__tableLink" type="submit">
+                        Save
+                      </button>
+                      <button
+                        className="dashboard__ghostButton"
+                        type="button"
+                        onClick={() => {
+                          setEditingPlanId("");
+                          setEditingPlanName("");
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <div>
+                        <strong>{plan.name}</strong>
+                        <p>{plan.active ? "Active" : "Archived"}</p>
+                      </div>
+                      <div className="dashboard__rowActions">
+                        <button className="dashboard__ghostButton" type="button" onClick={() => startEditingPlan(plan)}>
+                          <Pencil size={14} />
+                          Edit
+                        </button>
+                        <button
+                          className={plan.active ? "dashboard__dangerButton" : "dashboard__ghostButton"}
+                          type="button"
+                          onClick={() => onSetPlanActive(plan.id, !plan.active)}
+                        >
+                          <Archive size={14} />
+                          {plan.active ? "Archive" : "Restore"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -988,6 +1405,10 @@ function toDateKey(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function dateKeyToIso(dateKey: string): string {
+  return new Date(`${dateKey}T12:00:00`).toISOString();
 }
 
 function getRouteFromHash(): Route {

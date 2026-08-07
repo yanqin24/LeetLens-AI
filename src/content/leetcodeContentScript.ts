@@ -46,6 +46,13 @@ type SubmissionState = {
   source: "dom" | "network";
 };
 
+type ProblemPageMetadata = {
+  leetcodeId?: string;
+  title?: string;
+  difficulty?: "Easy" | "Medium" | "Hard" | "Unknown";
+  tags?: string[];
+};
+
 let lastFingerprint = "";
 let lastFingerprintAt = 0;
 let submitArmedUntil = 0;
@@ -412,15 +419,16 @@ async function getActiveReviewTask(): Promise<ActiveReviewTask | undefined> {
 
 function extractProblemMetadata() {
   const slug = location.pathname.split("/").filter(Boolean)[1] ?? "unknown";
+  const structuredMetadata = extractStructuredProblemMetadata(slug);
   const rawTitle =
+    structuredMetadata.title ??
     queryText('[data-cy="question-title"]') ??
-    queryText("a[href*='/problems/']") ??
     queryText("h1") ??
-    slug;
+    formatSlugTitle(slug);
   const titleMatch = rawTitle.match(/^(\d+)\.\s*(.*)$/);
-  const leetcodeId = titleMatch?.[1];
+  const leetcodeId = structuredMetadata.leetcodeId ?? titleMatch?.[1];
   const title = titleMatch?.[2] ?? rawTitle;
-  const difficulty = detectDifficulty();
+  const difficulty = structuredMetadata.difficulty ?? detectDifficulty();
 
   return {
     leetcodeId,
@@ -428,8 +436,162 @@ function extractProblemMetadata() {
     slug,
     url: location.href,
     difficulty,
-    tags: extractTags()
+    tags: structuredMetadata.tags?.length ? structuredMetadata.tags : extractTags()
   };
+}
+
+function extractStructuredProblemMetadata(slug: string): ProblemPageMetadata {
+  for (const script of Array.from(document.querySelectorAll("script"))) {
+    const text = script.textContent?.trim();
+
+    if (!text || !text.includes(slug)) {
+      continue;
+    }
+
+    const parsedMetadata = extractMetadataFromJsonScript(text, slug);
+
+    if (parsedMetadata) {
+      return parsedMetadata;
+    }
+
+    const regexMetadata = extractMetadataFromScriptText(text, slug);
+
+    if (regexMetadata.leetcodeId || regexMetadata.title) {
+      return regexMetadata;
+    }
+  }
+
+  return {};
+}
+
+function extractMetadataFromJsonScript(text: string, slug: string): ProblemPageMetadata | undefined {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const record = findProblemRecord(parsed, slug);
+
+    if (!record) {
+      return undefined;
+    }
+
+    return metadataFromRecord(record);
+  } catch {
+    return undefined;
+  }
+}
+
+function findProblemRecord(value: unknown, slug: string, depth = 0): Record<string, unknown> | undefined {
+  if (depth > 8 || value == null || typeof value !== "object") {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const result = findProblemRecord(item, slug, depth + 1);
+
+      if (result) {
+        return result;
+      }
+    }
+
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const titleSlug = readStringField(record, ["titleSlug", "questionTitleSlug", "slug"]);
+
+  if (titleSlug === slug && (record.title || record.questionFrontendId || record.frontendQuestionId)) {
+    return record;
+  }
+
+  for (const item of Object.values(record)) {
+    const result = findProblemRecord(item, slug, depth + 1);
+
+    if (result) {
+      return result;
+    }
+  }
+
+  return undefined;
+}
+
+function metadataFromRecord(record: Record<string, unknown>): ProblemPageMetadata {
+  const topicTags = Array.isArray(record.topicTags)
+    ? record.topicTags
+        .map((tag) => (tag && typeof tag === "object" ? readStringField(tag as Record<string, unknown>, ["name"]) : undefined))
+        .filter((tag): tag is string => Boolean(tag))
+    : [];
+
+  return {
+    leetcodeId: readStringField(record, ["questionFrontendId", "frontendQuestionId", "questionId"]),
+    title: readStringField(record, ["title", "questionTitle"]),
+    difficulty: readDifficulty(readStringField(record, ["difficulty"])),
+    tags: topicTags
+  };
+}
+
+function extractMetadataFromScriptText(text: string, slug: string): ProblemPageMetadata {
+  if (!text.includes(slug)) {
+    return {};
+  }
+
+  return {
+    leetcodeId: matchJsonStringField(text, "questionFrontendId") ?? matchJsonStringField(text, "frontendQuestionId"),
+    title: matchJsonStringField(text, "title"),
+    difficulty: readDifficulty(matchJsonStringField(text, "difficulty")),
+    tags: extractTopicTagsFromScriptText(text)
+  };
+}
+
+function matchJsonStringField(text: string, field: string): string | undefined {
+  const escapedField = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = text.match(new RegExp(`"${escapedField}"\\s*:\\s*"([^"]+)"`));
+  return match?.[1];
+}
+
+function extractTopicTagsFromScriptText(text: string): string[] {
+  const tagMatches = Array.from(text.matchAll(/"topicTags"\s*:\s*\[(.*?)\]/gs));
+  const firstTagBlock = tagMatches[0]?.[1];
+
+  if (!firstTagBlock) {
+    return [];
+  }
+
+  return Array.from(firstTagBlock.matchAll(/"name"\s*:\s*"([^"]+)"/g))
+    .map((match) => match[1])
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function readStringField(record: Record<string, unknown>, fields: string[]): string | undefined {
+  for (const field of fields) {
+    const value = record[field];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+
+    if (typeof value === "number") {
+      return String(value);
+    }
+  }
+
+  return undefined;
+}
+
+function readDifficulty(value?: string): "Easy" | "Medium" | "Hard" | "Unknown" | undefined {
+  if (value === "Easy" || value === "Medium" || value === "Hard" || value === "Unknown") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function formatSlugTitle(slug: string): string {
+  return slug
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word[0]?.toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 function detectDifficulty(): "Easy" | "Medium" | "Hard" | "Unknown" {
