@@ -26,6 +26,26 @@ type DemoProblem = {
   repeatDaily?: boolean;
 };
 
+type DemoDataIds = {
+  attemptIds: string[];
+  mistakeIds: string[];
+  planIds: string[];
+  problemIds: string[];
+  reviewLogIds: string[];
+  reviewStateIds: string[];
+  taskIds: string[];
+};
+
+export type RemoveDemoDataResult = {
+  attempts: number;
+  mistakes: number;
+  plans: number;
+  problems: number;
+  reviewLogs: number;
+  reviewStates: number;
+  tasks: number;
+};
+
 const demoProblems: DemoProblem[] = [
   {
     leetcodeId: "1",
@@ -346,48 +366,7 @@ export async function seedDemoData(): Promise<void> {
       db.reviewTasks
     ],
     async () => {
-      const existingDemoAttempts = await db.attempts
-        .filter((attempt) => attempt.fingerprint.startsWith("demo-"))
-        .toArray();
-      const existingDemoProblemIds = Array.from(
-        new Set(existingDemoAttempts.map((attempt) => attempt.problemId))
-      );
-      const existingDemoAttemptIds = existingDemoAttempts.map((attempt) => attempt.id);
-      const existingDemoMistakes = await db.mistakes
-        .filter(
-          (mistake) =>
-            existingDemoProblemIds.includes(mistake.problemId) ||
-            existingDemoAttemptIds.includes(mistake.attemptId)
-        )
-        .toArray();
-      const existingDemoReviewStates = await db.reviewStates
-        .filter((reviewState) => existingDemoProblemIds.includes(reviewState.problemId))
-        .toArray();
-      const existingDemoReviewLogs = await db.reviewLogs
-        .filter((reviewLog) => existingDemoProblemIds.includes(reviewLog.problemId))
-        .toArray();
-      const existingDemoPlans = await db.reviewPlans
-        .filter((plan) => plan.id.startsWith("demo_plan_"))
-        .toArray();
-      const existingDemoPlanIds = existingDemoPlans.map((plan) => plan.id);
-      const existingDemoTasks = await db.reviewTasks
-        .filter(
-          (task) =>
-            task.id.startsWith("demo_task_") ||
-            existingDemoPlanIds.includes(task.planId) ||
-            existingDemoProblemIds.includes(task.problemId)
-        )
-        .toArray();
-
-      await Promise.all([
-        db.mistakes.bulkDelete(existingDemoMistakes.map((mistake) => mistake.id)),
-        db.reviewStates.bulkDelete(existingDemoReviewStates.map((reviewState) => reviewState.id)),
-        db.reviewLogs.bulkDelete(existingDemoReviewLogs.map((reviewLog) => reviewLog.id)),
-        db.reviewTasks.bulkDelete(existingDemoTasks.map((task) => task.id)),
-        db.reviewPlans.bulkDelete(existingDemoPlanIds),
-        db.attempts.bulkDelete(existingDemoAttemptIds),
-        db.problems.bulkDelete(existingDemoProblemIds)
-      ]);
+      await deleteDemoDataIds(await collectDemoDataIds());
 
       await db.problems.bulkPut(problems);
       await db.attempts.bulkPut(attempts);
@@ -397,6 +376,108 @@ export async function seedDemoData(): Promise<void> {
       await db.reviewTasks.bulkPut(reviewTasks);
     }
   );
+}
+
+export async function removeDemoData(): Promise<RemoveDemoDataResult> {
+  return db.transaction(
+    "rw",
+    [
+      db.problems,
+      db.attempts,
+      db.mistakes,
+      db.reviewStates,
+      db.reviewLogs,
+      db.reviewPlans,
+      db.reviewTasks
+    ],
+    async () => {
+      const ids = await collectDemoDataIds();
+      await deleteDemoDataIds(ids);
+
+      return {
+        attempts: ids.attemptIds.length,
+        mistakes: ids.mistakeIds.length,
+        plans: ids.planIds.length,
+        problems: ids.problemIds.length,
+        reviewLogs: ids.reviewLogIds.length,
+        reviewStates: ids.reviewStateIds.length,
+        tasks: ids.taskIds.length
+      };
+    }
+  );
+}
+
+export async function hasDemoData(): Promise<boolean> {
+  const demoAttempt = await db.attempts
+    .filter((attempt) => attempt.fingerprint.startsWith("demo-"))
+    .first();
+
+  if (demoAttempt) {
+    return true;
+  }
+
+  const demoPlan = await db.reviewPlans
+    .filter((plan) => plan.id.startsWith("demo_plan_"))
+    .first();
+
+  return Boolean(demoPlan);
+}
+
+async function collectDemoDataIds(): Promise<DemoDataIds> {
+  const existingDemoAttempts = await db.attempts
+    .filter((attempt) => attempt.fingerprint.startsWith("demo-"))
+    .toArray();
+  const existingDemoProblemIds = Array.from(
+    new Set(existingDemoAttempts.map((attempt) => attempt.problemId))
+  );
+  const existingDemoAttemptIds = existingDemoAttempts.map((attempt) => attempt.id);
+  const existingDemoMistakes = await db.mistakes
+    .filter(
+      (mistake) =>
+        existingDemoProblemIds.includes(mistake.problemId) ||
+        existingDemoAttemptIds.includes(mistake.attemptId)
+    )
+    .toArray();
+  const existingDemoReviewStates = await db.reviewStates
+    .filter((reviewState) => existingDemoProblemIds.includes(reviewState.problemId))
+    .toArray();
+  const existingDemoReviewLogs = await db.reviewLogs
+    .filter((reviewLog) => existingDemoProblemIds.includes(reviewLog.problemId))
+    .toArray();
+  const existingDemoPlans = await db.reviewPlans
+    .filter((plan) => plan.id.startsWith("demo_plan_"))
+    .toArray();
+  const existingDemoPlanIds = existingDemoPlans.map((plan) => plan.id);
+  const existingDemoTasks = await db.reviewTasks
+    .filter(
+      (task) =>
+        task.id.startsWith("demo_task_") ||
+        existingDemoPlanIds.includes(task.planId) ||
+        existingDemoProblemIds.includes(task.problemId)
+    )
+    .toArray();
+
+  return {
+    attemptIds: existingDemoAttemptIds,
+    mistakeIds: existingDemoMistakes.map((mistake) => mistake.id),
+    planIds: existingDemoPlanIds,
+    problemIds: existingDemoProblemIds,
+    reviewLogIds: existingDemoReviewLogs.map((reviewLog) => reviewLog.id),
+    reviewStateIds: existingDemoReviewStates.map((reviewState) => reviewState.id),
+    taskIds: existingDemoTasks.map((task) => task.id)
+  };
+}
+
+async function deleteDemoDataIds(ids: DemoDataIds): Promise<void> {
+  await Promise.all([
+    db.mistakes.bulkDelete(ids.mistakeIds),
+    db.reviewStates.bulkDelete(ids.reviewStateIds),
+    db.reviewLogs.bulkDelete(ids.reviewLogIds),
+    db.reviewTasks.bulkDelete(ids.taskIds),
+    db.reviewPlans.bulkDelete(ids.planIds),
+    db.attempts.bulkDelete(ids.attemptIds),
+    db.problems.bulkDelete(ids.problemIds)
+  ]);
 }
 
 function createDemoPlan(

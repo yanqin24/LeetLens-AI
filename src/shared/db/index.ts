@@ -5,6 +5,7 @@ export * from "./repositories/demoDataRepository";
 export * from "./repositories/mistakeRepository";
 export * from "./repositories/portableDataRepository";
 export * from "./repositories/problemRepository";
+export * from "./repositories/problemMetadataRepairRepository";
 export * from "./repositories/reviewRepository";
 export * from "./repositories/reviewTaskRepository";
 export * from "../review/reviewScheduler";

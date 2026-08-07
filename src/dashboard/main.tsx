@@ -14,10 +14,15 @@ import {
   Settings2,
   Target,
   Trash2,
-  Upload
+  Upload,
+  Wrench
 } from "lucide-react";
-import { seedDemoData } from "../shared/db/repositories/demoDataRepository";
+import { removeDemoData, seedDemoData } from "../shared/db/repositories/demoDataRepository";
 import { exportPortableData, importPortableData } from "../shared/db/repositories/portableDataRepository";
+import {
+  needsProblemMetadataRepair,
+  repairProblemMetadata
+} from "../shared/db/repositories/problemMetadataRepairRepository";
 import { db } from "../shared/db/schema";
 import { createId } from "../shared/utils/ids";
 import type { SubmissionAttempt } from "../shared/types/attempt";
@@ -27,7 +32,7 @@ import type { ReviewPlan, ReviewTask } from "../shared/types/reviewPlan";
 import type { ReviewState } from "../shared/types/review";
 import "./dashboard.css";
 
-const AUTO_SEED_DEMO_DATA = true;
+const AUTO_SEED_DEMO_DATA = false;
 const ACTIVE_REVIEW_TASK_KEY = "leetlens.activeReviewTask";
 
 type DashboardTab = "notebook" | "plans";
@@ -109,6 +114,15 @@ function DashboardApp(): JSX.Element {
 
   const problemSummaries = useMemo(() => buildProblemSummaries(data), [data]);
   const insights = useMemo(() => buildInsights(data, problemSummaries), [data, problemSummaries]);
+  const hasDemoRecords = useMemo(() => {
+    return (
+      data.attempts.some((attempt) => attempt.fingerprint.startsWith("demo-")) ||
+      data.reviewPlans.some((plan) => plan.id.startsWith("demo_plan_"))
+    );
+  }, [data.attempts, data.reviewPlans]);
+  const hasRepairableProblemMetadata = useMemo(() => {
+    return data.problems.some(needsProblemMetadataRepair);
+  }, [data.problems]);
   const selectedProblem = useMemo(() => {
     if (route.name !== "detail") {
       return undefined;
@@ -149,6 +163,11 @@ function DashboardApp(): JSX.Element {
 
     if (selectedPlanId && activeReviewPlans.length && !activeReviewPlans.some((plan) => plan.id === selectedPlanId)) {
       setSelectedPlanId(activeReviewPlans[0].id);
+      return;
+    }
+
+    if (selectedPlanId && !activeReviewPlans.length) {
+      setSelectedPlanId("");
     }
   }, [activeReviewPlans, selectedPlanId]);
 
@@ -230,6 +249,55 @@ function DashboardApp(): JSX.Element {
       );
     } catch (error) {
       setDataActionMessage(error instanceof Error ? error.message : "Import failed.");
+    } finally {
+      setDataActionBusy(false);
+    }
+  }
+
+  async function handleRemoveDemoData(): Promise<void> {
+    const shouldRemove = window.confirm("Remove LeetLens demo data from this browser?");
+
+    if (!shouldRemove) {
+      return;
+    }
+
+    setDataActionBusy(true);
+    setDataActionMessage("");
+
+    try {
+      const result = await removeDemoData();
+      const deletedRecords =
+        result.attempts +
+        result.mistakes +
+        result.plans +
+        result.problems +
+        result.reviewLogs +
+        result.reviewStates +
+        result.tasks;
+
+      setSelectedPlanId("");
+      await loadDashboard();
+      setDataActionMessage(`Removed ${deletedRecords} demo records.`);
+    } catch (error) {
+      setDataActionMessage(error instanceof Error ? error.message : "Failed to remove demo data.");
+    } finally {
+      setDataActionBusy(false);
+    }
+  }
+
+  async function handleRepairProblemMetadata(): Promise<void> {
+    setDataActionBusy(true);
+    setDataActionMessage("");
+
+    try {
+      const result = await repairProblemMetadata();
+
+      await loadDashboard();
+      setDataActionMessage(
+        `Metadata repair finished: ${result.repaired} repaired, ${result.failed} failed, ${result.skipped} skipped.`
+      );
+    } catch (error) {
+      setDataActionMessage(error instanceof Error ? error.message : "Metadata repair failed.");
     } finally {
       setDataActionBusy(false);
     }
@@ -360,9 +428,13 @@ function DashboardApp(): JSX.Element {
       <DashboardShell
         dataActionBusy={dataActionBusy}
         dataActionMessage={dataActionMessage}
+        hasDemoRecords={hasDemoRecords}
+        hasRepairableProblemMetadata={hasRepairableProblemMetadata}
         insights={insights}
         onExport={() => void handleExportData()}
         onImport={(file) => void handleImportData(file)}
+        onRemoveDemoData={() => void handleRemoveDemoData()}
+        onRepairProblemMetadata={() => void handleRepairProblemMetadata()}
         onRefresh={() => void loadDashboard()}
       >
         {selectedProblem ? (
@@ -378,9 +450,13 @@ function DashboardApp(): JSX.Element {
     <DashboardShell
       dataActionBusy={dataActionBusy}
       dataActionMessage={dataActionMessage}
+      hasDemoRecords={hasDemoRecords}
+      hasRepairableProblemMetadata={hasRepairableProblemMetadata}
       insights={insights}
       onExport={() => void handleExportData()}
       onImport={(file) => void handleImportData(file)}
+      onRemoveDemoData={() => void handleRemoveDemoData()}
+      onRepairProblemMetadata={() => void handleRepairProblemMetadata()}
       onRefresh={() => void loadDashboard()}
     >
       <nav className="dashboard__tabs" aria-label="Dashboard tabs">
@@ -445,17 +521,25 @@ function DashboardShell({
   children,
   dataActionBusy,
   dataActionMessage,
+  hasDemoRecords,
+  hasRepairableProblemMetadata,
   insights,
   onExport,
   onImport,
+  onRemoveDemoData,
+  onRepairProblemMetadata,
   onRefresh
 }: {
   children: React.ReactNode;
   dataActionBusy: boolean;
   dataActionMessage: string;
+  hasDemoRecords: boolean;
+  hasRepairableProblemMetadata: boolean;
   insights: Insight[];
   onExport: () => void;
   onImport: (file: File) => void;
+  onRemoveDemoData: () => void;
+  onRepairProblemMetadata: () => void;
   onRefresh: () => void;
 }): JSX.Element {
   function handleImportChange(event: React.ChangeEvent<HTMLInputElement>): void {
@@ -504,6 +588,28 @@ function DashboardShell({
               onChange={handleImportChange}
             />
           </label>
+          {hasRepairableProblemMetadata ? (
+            <button
+              className="dashboard__ghostButton"
+              disabled={dataActionBusy}
+              type="button"
+              onClick={onRepairProblemMetadata}
+            >
+              <Wrench size={15} />
+              Repair metadata
+            </button>
+          ) : null}
+          {hasDemoRecords ? (
+            <button
+              className="dashboard__dangerButton"
+              disabled={dataActionBusy}
+              type="button"
+              onClick={onRemoveDemoData}
+            >
+              <Trash2 size={15} />
+              Remove demo data
+            </button>
+          ) : null}
         </div>
       </header>
 

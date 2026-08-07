@@ -163,7 +163,8 @@ body {
 }
 
 .dashboard__ghostButton:disabled,
-.dashboard__ghostButton--disabled {
+.dashboard__ghostButton--disabled,
+.dashboard__dangerButton:disabled {
   cursor: not-allowed;
   opacity: 0.58;
 }
