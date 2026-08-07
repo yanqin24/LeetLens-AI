@@ -24,12 +24,16 @@ import {
   repairProblemMetadata
 } from "../shared/db/repositories/problemMetadataRepairRepository";
 import { db } from "../shared/db/schema";
+import {
+  buildReviewInsightsSummary,
+  type ReviewInsightsSummary
+} from "../shared/insights/reviewInsights";
 import { createId } from "../shared/utils/ids";
 import type { SubmissionAttempt } from "../shared/types/attempt";
 import type { MistakeRecord } from "../shared/types/mistake";
 import type { Problem } from "../shared/types/problem";
 import type { ReviewPlan, ReviewTask } from "../shared/types/reviewPlan";
-import type { ReviewState } from "../shared/types/review";
+import type { ReviewLog, ReviewState } from "../shared/types/review";
 import "./dashboard.css";
 
 const AUTO_SEED_DEMO_DATA = false;
@@ -45,6 +49,7 @@ type DashboardData = {
   mistakes: MistakeRecord[];
   reviewStates: ReviewState[];
   reviewPlans: ReviewPlan[];
+  reviewLogs: ReviewLog[];
   reviewTasks: ReviewTask[];
 };
 
@@ -80,6 +85,7 @@ function DashboardApp(): JSX.Element {
     mistakes: [],
     reviewStates: [],
     reviewPlans: [],
+    reviewLogs: [],
     reviewTasks: []
   });
   const [activeTab, setActiveTab] = useState<DashboardTab>("notebook");
@@ -114,6 +120,7 @@ function DashboardApp(): JSX.Element {
 
   const problemSummaries = useMemo(() => buildProblemSummaries(data), [data]);
   const insights = useMemo(() => buildInsights(data, problemSummaries), [data, problemSummaries]);
+  const reviewInsights = useMemo(() => buildReviewInsightsSummary(data), [data]);
   const hasDemoRecords = useMemo(() => {
     return (
       data.attempts.some((attempt) => attempt.fingerprint.startsWith("demo-")) ||
@@ -193,16 +200,17 @@ function DashboardApp(): JSX.Element {
       await seedDemoData();
     }
 
-    const [problems, attempts, mistakes, reviewStates, reviewPlans, reviewTasks] = await Promise.all([
+    const [problems, attempts, mistakes, reviewStates, reviewPlans, reviewLogs, reviewTasks] = await Promise.all([
       db.problems.toArray(),
       db.attempts.toArray(),
       db.mistakes.toArray(),
       db.reviewStates.toArray(),
       db.reviewPlans.toArray(),
+      db.reviewLogs.toArray(),
       db.reviewTasks.toArray()
     ]);
 
-    setData({ problems, attempts, mistakes, reviewStates, reviewPlans, reviewTasks });
+    setData({ problems, attempts, mistakes, reviewStates, reviewPlans, reviewLogs, reviewTasks });
 
     const activePlans = reviewPlans.filter((plan) => plan.active);
 
@@ -478,6 +486,8 @@ function DashboardApp(): JSX.Element {
         </button>
       </nav>
 
+      <WeeklySummary summary={reviewInsights} />
+
       {activeTab === "notebook" ? (
         <MistakeNotebook
           plans={activeReviewPlans}
@@ -636,6 +646,88 @@ function InsightCard({ insight }: { insight: Insight }): JSX.Element {
         <p>{insight.detail}</p>
       </div>
     </article>
+  );
+}
+
+function WeeklySummary({ summary }: { summary: ReviewInsightsSummary }): JSX.Element {
+  return (
+    <section className="dashboard__weeklySummary" aria-label="Weekly review summary">
+      <div className="dashboard__sectionHeader">
+        <div>
+          <p className="dashboard__eyebrow">Weekly Summary</p>
+          <h2>Review insights</h2>
+        </div>
+      </div>
+
+      <div className="dashboard__summaryGrid">
+        <SummaryMetric label="Attempts" value={summary.weeklyAttemptCount} />
+        <SummaryMetric label="Failed" value={summary.weeklyFailedAttemptCount} />
+        <SummaryMetric label="Reviewed" value={summary.weeklyReviewedCount} />
+        <SummaryMetric label="Failed again" value={summary.failedAgainCount} />
+        <SummaryMetric label="Due today" value={summary.dueTodayCount} />
+        <SummaryMetric label="Due tomorrow" value={summary.dueTomorrowCount} />
+      </div>
+
+      <div className="dashboard__summaryColumns">
+        <RankedList title="Top reasons" rows={summary.topMistakeReasons} />
+        <RankedList title="Weak topics" rows={summary.weakestTopics} />
+        <section className="dashboard__summaryColumn">
+          <h3>Recommended reviews</h3>
+          {summary.recommendedReviews.length ? (
+            <div className="dashboard__recommendations">
+              {summary.recommendedReviews.map((item) => (
+                <div className="dashboard__recommendation" key={item.problemId}>
+                  <strong>
+                    {item.leetcodeId ? `${item.leetcodeId}. ` : ""}
+                    {item.title}
+                  </strong>
+                  <p>
+                    {item.topic} | {item.reason}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="dashboard__summaryEmpty">No recommendations yet.</p>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function SummaryMetric({ label, value }: { label: string; value: number }): JSX.Element {
+  return (
+    <div className="dashboard__summaryMetric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RankedList({
+  title,
+  rows
+}: {
+  title: string;
+  rows: Array<{ label: string; count: number }>;
+}): JSX.Element {
+  return (
+    <section className="dashboard__summaryColumn">
+      <h3>{title}</h3>
+      {rows.length ? (
+        <ol className="dashboard__rankedList">
+          {rows.map((row) => (
+            <li key={row.label}>
+              <span>{row.label}</span>
+              <strong>{row.count}</strong>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="dashboard__summaryEmpty">No data yet.</p>
+      )}
+    </section>
   );
 }
 

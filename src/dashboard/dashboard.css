@@ -208,6 +208,99 @@ body {
   color: #172033;
 }
 
+.dashboard__weeklySummary {
+  background: #ffffff;
+  border: 1px solid #dfe4ec;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  padding: 14px;
+}
+
+.dashboard__summaryGrid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.dashboard__summaryMetric {
+  background: #f8fbff;
+  border: 1px solid #e8ebf1;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.dashboard__summaryMetric span {
+  color: #647084;
+  display: block;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.dashboard__summaryMetric strong {
+  display: block;
+  font-size: 19px;
+}
+
+.dashboard__summaryColumns {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr 1.35fr;
+}
+
+.dashboard__summaryColumn {
+  border-top: 1px solid #e8ebf1;
+  padding-top: 12px;
+}
+
+.dashboard__summaryColumn h3 {
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.dashboard__rankedList {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dashboard__rankedList li {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.dashboard__rankedList span,
+.dashboard__recommendation p,
+.dashboard__summaryEmpty {
+  color: #647084;
+  font-size: 13px;
+}
+
+.dashboard__recommendations {
+  display: grid;
+  gap: 9px;
+}
+
+.dashboard__recommendation {
+  border: 1px solid #e8ebf1;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.dashboard__recommendation strong {
+  display: block;
+  font-size: 13px;
+}
+
+.dashboard__recommendation p,
+.dashboard__summaryEmpty {
+  margin: 5px 0 0;
+}
+
 .dashboard__panel {
   padding: 16px;
 }
@@ -660,6 +753,8 @@ body {
   .dashboard__insights,
   .dashboard__detailGrid,
   .dashboard__toolbar,
+  .dashboard__summaryGrid,
+  .dashboard__summaryColumns,
   .dashboard__planTools {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -679,6 +774,8 @@ body {
   .dashboard__insights,
   .dashboard__detailGrid,
   .dashboard__toolbar,
+  .dashboard__summaryGrid,
+  .dashboard__summaryColumns,
   .dashboard__planTools,
   .dashboard__compactForm {
     grid-template-columns: 1fr;
