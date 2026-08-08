@@ -223,6 +223,35 @@ body {
   margin-bottom: 14px;
 }
 
+.dashboard__summaryActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.dashboard__summaryAskButton {
+  align-items: center;
+  background: #f8fbff;
+  border: 1px solid #cbd3df;
+  border-radius: 999px;
+  color: #394456;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.dashboard__summaryAskButton:hover,
+.dashboard__agentQuestion:hover {
+  border-color: #2264d1;
+  color: #174ea6;
+}
+
 .dashboard__summaryMetric {
   background: #f8fbff;
   border: 1px solid #e8ebf1;
@@ -299,6 +328,208 @@ body {
 .dashboard__recommendation p,
 .dashboard__summaryEmpty {
   margin: 5px 0 0;
+}
+
+.dashboard__agentLauncher {
+  align-items: center;
+  background: #172033;
+  border: 1px solid #172033;
+  border-radius: 999px;
+  bottom: 22px;
+  box-shadow: 0 14px 32px rgb(23 32 51 / 22%);
+  color: #ffffff;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 12px 16px;
+  position: fixed;
+  right: 22px;
+  z-index: 19;
+}
+
+.dashboard__agentDrawer {
+  background: #ffffff;
+  border-left: 1px solid #dfe4ec;
+  box-shadow: -18px 0 44px rgb(23 32 51 / 14%);
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto;
+  gap: 14px;
+  height: 100vh;
+  max-width: 420px;
+  padding: 18px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: min(420px, 100vw);
+  z-index: 30;
+}
+
+.dashboard__agentHeader {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.dashboard__agentContext {
+  color: #647084;
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.dashboard__agentGuide {
+  background: #f8fbff;
+  border: 1px solid #e8ebf1;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.dashboard__agentGuide p {
+  color: #394456;
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0 0 10px;
+}
+
+.dashboard__agentGuide ol {
+  display: grid;
+  gap: 7px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dashboard__agentQuestion {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #cbd3df;
+  border-radius: 8px;
+  color: #394456;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto 1fr;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  padding: 9px;
+  text-align: left;
+  width: 100%;
+}
+
+.dashboard__agentQuestion:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.dashboard__agentQuestion span {
+  align-items: center;
+  background: #eef4ff;
+  border-radius: 50%;
+  color: #2264d1;
+  display: inline-flex;
+  font-size: 11px;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.dashboard__agentMessages {
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.dashboard__agentMessage {
+  background: #f8fbff;
+  border: 1px solid #e8ebf1;
+  border-radius: 8px;
+  padding: 11px;
+}
+
+.dashboard__agentMessage--user {
+  background: #e8f0ff;
+  border-color: #c6d8ff;
+}
+
+.dashboard__agentMessage--thinking {
+  width: fit-content;
+}
+
+.dashboard__agentMessage > span {
+  color: #647084;
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.dashboard__agentMessage p {
+  color: #172033;
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.dashboard__typingDots {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  height: 16px;
+}
+
+.dashboard__typingDots i {
+  animation: dashboardTypingPulse 0.95s infinite ease-in-out;
+  background: #647084;
+  border-radius: 50%;
+  display: block;
+  height: 6px;
+  width: 6px;
+}
+
+.dashboard__typingDots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.dashboard__typingDots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes dashboardTypingPulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.dashboard__agentComposer {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard__agentComposer textarea {
+  border: 1px solid #cbd3df;
+  border-radius: 8px;
+  color: #172033;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 10px;
+  resize: vertical;
 }
 
 .dashboard__panel {
@@ -406,13 +637,20 @@ body {
 .dashboard__planSelect select,
 .dashboard__compactForm input,
 .dashboard__modal input,
-.dashboard__modal select {
+.dashboard__modal select,
+.dashboard__mistakeForm select,
+.dashboard__mistakeForm textarea {
   background: #ffffff;
   border: 1px solid #cbd3df;
   border-radius: 7px;
   color: #172033;
   font: inherit;
   padding: 8px;
+}
+
+.dashboard__mistakeForm textarea {
+  line-height: 1.45;
+  resize: vertical;
 }
 
 .dashboard__dateTabs {
@@ -649,6 +887,18 @@ body {
   margin-bottom: 16px;
 }
 
+.dashboard__detailSection {
+  border-top: 1px solid #e8ebf1;
+  margin-top: 18px;
+  padding-top: 16px;
+}
+
+.dashboard__detailSection h3,
+.dashboard__attempts h3 {
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+
 .dashboard__detailHeader {
   align-items: flex-start;
   border-bottom: 1px solid #e8ebf1;
@@ -699,6 +949,55 @@ body {
 
 .dashboard__attemptMeta {
   margin-bottom: 10px;
+}
+
+.dashboard__mistakeForm {
+  background: #f8fbff;
+  border: 1px solid #e8ebf1;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 12px;
+  padding: 12px;
+}
+
+.dashboard__mistakeForm label {
+  color: #394456;
+  display: grid;
+  font-size: 13px;
+  gap: 6px;
+}
+
+.dashboard__mistakeFormNote,
+.dashboard__mistakeForm .dashboard__modalActions {
+  grid-column: 1 / -1;
+}
+
+.dashboard__timeline {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dashboard__timeline li {
+  border: 1px solid #e8ebf1;
+  border-radius: 8px;
+  padding: 11px;
+}
+
+.dashboard__timeline strong {
+  display: block;
+  font-size: 13px;
+}
+
+.dashboard__timeline span,
+.dashboard__timeline p {
+  color: #647084;
+  font-size: 12px;
+  margin: 5px 0 0;
 }
 
 .dashboard__note {
@@ -777,11 +1076,13 @@ body {
   .dashboard__summaryGrid,
   .dashboard__summaryColumns,
   .dashboard__planTools,
+  .dashboard__mistakeForm,
   .dashboard__compactForm {
     grid-template-columns: 1fr;
   }
 
   .dashboard__modalHeader,
+  .dashboard__agentHeader,
   .dashboard__planListItem {
     align-items: flex-start;
     flex-direction: column;

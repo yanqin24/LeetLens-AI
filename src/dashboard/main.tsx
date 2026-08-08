@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   CalendarCheck2,
@@ -7,6 +7,7 @@ import {
   ListChecks,
   NotebookTabs,
   Archive,
+  Bot,
   Pencil,
   PieChart,
   Plus,
@@ -17,6 +18,7 @@ import {
   Upload,
   Wrench
 } from "lucide-react";
+import { mistakeTaxonomy } from "../shared/constants/mistakeTaxonomy";
 import { removeDemoData, seedDemoData } from "../shared/db/repositories/demoDataRepository";
 import { exportPortableData, importPortableData } from "../shared/db/repositories/portableDataRepository";
 import {
@@ -24,6 +26,12 @@ import {
   repairProblemMetadata
 } from "../shared/db/repositories/problemMetadataRepairRepository";
 import { db } from "../shared/db/schema";
+import {
+  answerLocalAgentQuestion,
+  buildAgentWelcomeMessage,
+  suggestedAgentPrompts,
+  type AgentMessage
+} from "../shared/agent/localAgent";
 import {
   buildReviewInsightsSummary,
   type ReviewInsightsSummary
@@ -57,6 +65,7 @@ type ProblemSummary = {
   problem: Problem;
   attempts: SubmissionAttempt[];
   mistakes: MistakeRecord[];
+  reviewLogs: ReviewLog[];
   reviewState?: ReviewState;
   failureCount: number;
   latestAttempt?: SubmissionAttempt;
@@ -76,6 +85,12 @@ type Insight = {
   value: string;
   detail: string;
   icon: React.ReactNode;
+};
+
+type MistakeEditInput = {
+  primaryReason: string;
+  secondaryReason?: string;
+  note?: string;
 };
 
 function DashboardApp(): JSX.Element {
@@ -98,9 +113,28 @@ function DashboardApp(): JSX.Element {
   const [route, setRoute] = useState<Route>(getRouteFromHash());
   const [dataActionMessage, setDataActionMessage] = useState("");
   const [dataActionBusy, setDataActionBusy] = useState(false);
+  const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+  const [agentInput, setAgentInput] = useState("");
+  const [agentThinking, setAgentThinking] = useState(false);
+  const agentReplyTimeoutRef = useRef<number | null>(null);
+  const [agentMessages, setAgentMessages] = useState<AgentMessage[]>([
+    {
+      id: createId("agent_msg"),
+      role: "agent",
+      content: buildAgentWelcomeMessage()
+    }
+  ]);
 
   useEffect(() => {
     void loadDashboard();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (agentReplyTimeoutRef.current !== null) {
+        window.clearTimeout(agentReplyTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -431,6 +465,67 @@ function DashboardApp(): JSX.Element {
     await loadDashboard();
   }
 
+  async function handleUpdateMistake(mistakeId: string, input: MistakeEditInput): Promise<void> {
+    const primaryReason = input.primaryReason.trim();
+
+    if (!primaryReason) {
+      setDataActionMessage("Primary reason is required.");
+      return;
+    }
+
+    await db.mistakes.update(mistakeId, {
+      primaryReason,
+      secondaryReason: input.secondaryReason?.trim() || undefined,
+      note: input.note?.trim() || undefined,
+      confidence: "user_confirmed",
+      updatedAt: new Date().toISOString()
+    });
+    setDataActionMessage("Updated mistake record.");
+    await loadDashboard();
+  }
+
+  function handleAskAgent(question: string): void {
+    const trimmedQuestion = question.trim();
+
+    if (!trimmedQuestion || agentThinking) {
+      return;
+    }
+
+    setAgentMessages((messages) => [
+      ...messages,
+      {
+        id: createId("agent_msg"),
+        role: "user",
+        content: trimmedQuestion
+      }
+    ]);
+    setAgentInput("");
+    setAgentDrawerOpen(true);
+    setAgentThinking(true);
+
+    if (agentReplyTimeoutRef.current !== null) {
+      window.clearTimeout(agentReplyTimeoutRef.current);
+    }
+
+    agentReplyTimeoutRef.current = window.setTimeout(() => {
+      const answer = answerLocalAgentQuestion({
+        question: trimmedQuestion,
+        summary: reviewInsights
+      });
+
+      setAgentMessages((messages) => [
+        ...messages,
+        {
+          id: createId("agent_msg"),
+          role: "agent",
+          content: answer
+        }
+      ]);
+      setAgentThinking(false);
+      agentReplyTimeoutRef.current = null;
+    }, 2000);
+  }
+
   if (route.name === "detail") {
     return (
       <DashboardShell
@@ -446,7 +541,10 @@ function DashboardApp(): JSX.Element {
         onRefresh={() => void loadDashboard()}
       >
         {selectedProblem ? (
-          <ProblemDetail summary={selectedProblem} />
+          <ProblemDetail
+            summary={selectedProblem}
+            onUpdateMistake={(mistakeId, input) => void handleUpdateMistake(mistakeId, input)}
+          />
         ) : (
           <EmptyState title="Problem not found" description="This record may have been deleted." />
         )}
@@ -486,7 +584,7 @@ function DashboardApp(): JSX.Element {
         </button>
       </nav>
 
-      <WeeklySummary summary={reviewInsights} />
+      <WeeklySummary summary={reviewInsights} onAskAgent={handleAskAgent} />
 
       {activeTab === "notebook" ? (
         <MistakeNotebook
@@ -523,6 +621,19 @@ function DashboardApp(): JSX.Element {
           onDateChange={setSelectedDate}
         />
       )}
+      <button className="dashboard__agentLauncher" type="button" onClick={() => setAgentDrawerOpen(true)}>
+        <Bot size={17} />
+        Ask LeetLens
+      </button>
+      <AgentDrawer
+        input={agentInput}
+        isThinking={agentThinking}
+        messages={agentMessages}
+        open={agentDrawerOpen}
+        onAsk={handleAskAgent}
+        onClose={() => setAgentDrawerOpen(false)}
+        onInputChange={setAgentInput}
+      />
     </DashboardShell>
   );
 }
@@ -649,13 +760,146 @@ function InsightCard({ insight }: { insight: Insight }): JSX.Element {
   );
 }
 
-function WeeklySummary({ summary }: { summary: ReviewInsightsSummary }): JSX.Element {
+function AgentDrawer({
+  input,
+  isThinking,
+  messages,
+  open,
+  onAsk,
+  onClose,
+  onInputChange
+}: {
+  input: string;
+  isThinking: boolean;
+  messages: AgentMessage[];
+  open: boolean;
+  onAsk: (question: string) => void;
+  onClose: () => void;
+  onInputChange: (value: string) => void;
+}): JSX.Element | null {
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [isThinking, messages, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    onAsk(input);
+  }
+
+  return (
+    <aside className="dashboard__agentDrawer" aria-label="LeetLens Agent">
+      <div className="dashboard__agentHeader">
+        <div>
+          <p className="dashboard__eyebrow">LeetLens Agent</p>
+          <h2>Local review assistant</h2>
+        </div>
+        <button className="dashboard__ghostButton" type="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      <p className="dashboard__agentContext">Using your local mistake notebook and weekly review summary.</p>
+
+      <section className="dashboard__agentGuide" aria-label="Suggested agent questions">
+        <p>I can read your review summary and help you choose the next move. Try one of these:</p>
+        <ol>
+          {suggestedAgentPrompts.slice(0, 4).map((prompt, index) => (
+            <li key={prompt.id}>
+              <button
+                className="dashboard__agentQuestion"
+                disabled={isThinking}
+                type="button"
+                onClick={() => onAsk(prompt.question)}
+              >
+                <span>{index + 1}</span>
+                {prompt.question}
+              </button>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="dashboard__agentMessages" aria-label="Agent conversation">
+        {messages.map((message) => (
+          <article
+            className={
+              message.role === "user"
+                ? "dashboard__agentMessage dashboard__agentMessage--user"
+                : "dashboard__agentMessage"
+            }
+            key={message.id}
+          >
+            <span>{message.role === "user" ? "You" : "LeetLens"}</span>
+            <p>{message.content}</p>
+          </article>
+        ))}
+        {isThinking ? (
+          <article className="dashboard__agentMessage dashboard__agentMessage--thinking">
+            <span>LeetLens</span>
+            <p>
+              <span className="dashboard__typingDots" aria-label="LeetLens is thinking">
+                <i />
+                <i />
+                <i />
+              </span>
+            </p>
+          </article>
+        ) : null}
+        <div ref={messagesEndRef} />
+      </section>
+
+      <form className="dashboard__agentComposer" onSubmit={handleSubmit}>
+        <textarea
+          disabled={isThinking}
+          placeholder="Ask about tomorrow, weak topics, or interview review..."
+          rows={3}
+          value={input}
+          onChange={(event) => onInputChange(event.target.value)}
+        />
+        <button className="dashboard__tableLink" disabled={!input.trim() || isThinking} type="submit">
+          {isThinking ? "Thinking" : "Ask"}
+        </button>
+      </form>
+    </aside>
+  );
+}
+
+function WeeklySummary({
+  summary,
+  onAskAgent
+}: {
+  summary: ReviewInsightsSummary;
+  onAskAgent: (question: string) => void;
+}): JSX.Element {
+  const quickPrompts = suggestedAgentPrompts.slice(0, 3);
+
   return (
     <section className="dashboard__weeklySummary" aria-label="Weekly review summary">
       <div className="dashboard__sectionHeader">
         <div>
           <p className="dashboard__eyebrow">Weekly Summary</p>
           <h2>Review insights</h2>
+        </div>
+        <div className="dashboard__summaryActions">
+          {quickPrompts.map((prompt) => (
+            <button
+              className="dashboard__summaryAskButton"
+              key={prompt.id}
+              type="button"
+              onClick={() => onAskAgent(prompt.question)}
+            >
+              <Bot size={14} />
+              {prompt.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -1242,8 +1486,14 @@ function ReviewPlans({
   );
 }
 
-function ProblemDetail({ summary }: { summary: ProblemSummary }): JSX.Element {
-  const { problem, attempts, mistakes, reviewState } = summary;
+function ProblemDetail({
+  summary,
+  onUpdateMistake
+}: {
+  summary: ProblemSummary;
+  onUpdateMistake: (mistakeId: string, input: MistakeEditInput) => void;
+}): JSX.Element {
+  const { problem, attempts, mistakes, reviewLogs, reviewState } = summary;
   const mistakeByAttemptId = new Map(mistakes.map((mistake) => [mistake.attemptId, mistake]));
 
   return (
@@ -1271,16 +1521,38 @@ function ProblemDetail({ summary }: { summary: ProblemSummary }): JSX.Element {
         <DetailStat label="Primary reason" value={summary.primaryReason} />
         <DetailStat label="Review status" value={formatReviewStatus(reviewState)} />
         <DetailStat label="Next review" value={formatDateTime(reviewState?.nextReviewAt)} />
+        <DetailStat label="Mastery" value={reviewState ? `${reviewState.mastery}/5` : "--"} />
+        <DetailStat label="Review count" value={reviewState?.reviewCount ?? "--"} />
+        <DetailStat label="Positive streak" value={reviewState?.positiveStreak ?? "--"} />
+        <DetailStat label="Last reviewed" value={formatDateTime(reviewState?.lastReviewedAt)} />
+      </section>
+
+      <section className="dashboard__detailSection" aria-label="Review history">
+        <h3>Review History</h3>
+        {reviewLogs.length ? (
+          <ol className="dashboard__timeline">
+            {reviewLogs.map((log) => (
+              <li key={log.id}>
+                <strong>{formatReviewLogResult(log.result)}</strong>
+                <span>{formatDateTime(log.reviewedAt)}</span>
+                {log.note ? <p>{log.note}</p> : null}
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="dashboard__summaryEmpty">No review logs yet.</p>
+        )}
       </section>
 
       <section className="dashboard__attempts" aria-label="Failed attempt history">
-        <h3>Failed Attempts</h3>
+        <h3>Submission History</h3>
         {attempts.length ? (
           attempts.map((attempt) => (
             <AttemptPanel
               key={attempt.id}
               attempt={attempt}
               mistake={mistakeByAttemptId.get(attempt.id)}
+              onUpdateMistake={onUpdateMistake}
             />
           ))
         ) : (
@@ -1293,11 +1565,40 @@ function ProblemDetail({ summary }: { summary: ProblemSummary }): JSX.Element {
 
 function AttemptPanel({
   attempt,
-  mistake
+  mistake,
+  onUpdateMistake
 }: {
   attempt: SubmissionAttempt;
   mistake?: MistakeRecord;
+  onUpdateMistake: (mistakeId: string, input: MistakeEditInput) => void;
 }): JSX.Element {
+  const [isEditing, setIsEditing] = useState(false);
+  const [primaryReason, setPrimaryReason] = useState(mistake?.primaryReason ?? "Uncategorized");
+  const [secondaryReason, setSecondaryReason] = useState(mistake?.secondaryReason ?? "");
+  const [note, setNote] = useState(mistake?.note ?? "");
+  const secondaryReasonOptions = getSecondaryReasonOptions(primaryReason);
+
+  useEffect(() => {
+    setPrimaryReason(mistake?.primaryReason ?? "Uncategorized");
+    setSecondaryReason(mistake?.secondaryReason ?? "");
+    setNote(mistake?.note ?? "");
+  }, [mistake]);
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+
+    if (!mistake) {
+      return;
+    }
+
+    onUpdateMistake(mistake.id, {
+      primaryReason,
+      secondaryReason,
+      note
+    });
+    setIsEditing(false);
+  }
+
   return (
     <article className="dashboard__attempt">
       <div className="dashboard__attemptHeader">
@@ -1307,15 +1608,70 @@ function AttemptPanel({
             {attempt.result} | {attempt.language}
           </h4>
         </div>
-        <span className="dashboard__captureStatus">{attempt.codeCaptureStatus}</span>
+        <div className="dashboard__rowActions">
+          <span className="dashboard__captureStatus">{attempt.codeCaptureStatus}</span>
+          {mistake ? (
+            <button className="dashboard__ghostButton" type="button" onClick={() => setIsEditing((value) => !value)}>
+              <Pencil size={14} />
+              {isEditing ? "Close" : "Edit"}
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <div className="dashboard__attemptMeta">
-        <span>{mistake?.primaryReason ?? "Uncategorized"}</span>
-        {mistake?.secondaryReason ? <span>{mistake.secondaryReason}</span> : null}
-      </div>
+      {isEditing && mistake ? (
+        <form className="dashboard__mistakeForm" onSubmit={handleSubmit}>
+          <label>
+            Primary reason
+            <select
+              value={primaryReason}
+              onChange={(event) => {
+                setPrimaryReason(event.target.value);
+                setSecondaryReason("");
+              }}
+            >
+              <option value="Uncategorized">Uncategorized</option>
+              {mistakeTaxonomy.map((item) => (
+                <option key={item.primaryReason} value={item.primaryReason}>
+                  {item.primaryReason}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Secondary reason
+            <select value={secondaryReason} onChange={(event) => setSecondaryReason(event.target.value)}>
+              <option value="">None</option>
+              {secondaryReasonOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="dashboard__mistakeFormNote">
+            Note
+            <textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} />
+          </label>
+          <div className="dashboard__modalActions">
+            <button className="dashboard__ghostButton" type="button" onClick={() => setIsEditing(false)}>
+              Cancel
+            </button>
+            <button className="dashboard__tableLink" type="submit">
+              Save
+            </button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <div className="dashboard__attemptMeta">
+            <span>{mistake?.primaryReason ?? "Uncategorized"}</span>
+            {mistake?.secondaryReason ? <span>{mistake.secondaryReason}</span> : null}
+          </div>
 
-      {mistake?.note ? <p className="dashboard__note">{mistake.note}</p> : null}
+          {mistake?.note ? <p className="dashboard__note">{mistake.note}</p> : null}
+        </>
+      )}
       {attempt.errorMessage ? <pre className="dashboard__errorText">{attempt.errorMessage}</pre> : null}
       <pre className="dashboard__code">
         <code>{attempt.code || "Code was not captured for this attempt."}</code>
@@ -1417,6 +1773,7 @@ function buildInsights(data: DashboardData, problemSummaries: ProblemSummary[]):
 function buildProblemSummaries(data: DashboardData): ProblemSummary[] {
   const attemptsByProblemId = groupBy(data.attempts, (attempt) => attempt.problemId);
   const mistakesByProblemId = groupBy(data.mistakes, (mistake) => mistake.problemId);
+  const reviewLogsByProblemId = groupBy(data.reviewLogs, (reviewLog) => reviewLog.problemId);
   const reviewStateByProblemId = new Map(
     data.reviewStates.map((reviewState) => [reviewState.problemId, reviewState])
   );
@@ -1425,6 +1782,7 @@ function buildProblemSummaries(data: DashboardData): ProblemSummary[] {
     .map((problem) => {
       const attempts = (attemptsByProblemId.get(problem.id) ?? []).sort(sortBySubmittedAtDesc);
       const mistakes = (mistakesByProblemId.get(problem.id) ?? []).sort(sortByCreatedAtDesc);
+      const reviewLogs = (reviewLogsByProblemId.get(problem.id) ?? []).sort(sortByReviewedAtDesc);
       const latestAttempt = attempts[0];
       const latestMistake = mistakes[0];
 
@@ -1432,6 +1790,7 @@ function buildProblemSummaries(data: DashboardData): ProblemSummary[] {
         problem,
         attempts,
         mistakes,
+        reviewLogs,
         reviewState: reviewStateByProblemId.get(problem.id),
         failureCount: attempts.filter((attempt) => attempt.result !== "Accepted").length,
         latestAttempt,
@@ -1543,6 +1902,10 @@ function sortByCreatedAtDesc(a: MistakeRecord, b: MistakeRecord): number {
   return b.createdAt.localeCompare(a.createdAt);
 }
 
+function sortByReviewedAtDesc(a: ReviewLog, b: ReviewLog): number {
+  return b.reviewedAt.localeCompare(a.reviewedAt);
+}
+
 function formatReviewStatus(reviewState?: ReviewState): string {
   if (!reviewState) {
     return "scheduled";
@@ -1553,6 +1916,17 @@ function formatReviewStatus(reviewState?: ReviewState): string {
   }
 
   return reviewState.status;
+}
+
+function formatReviewLogResult(result: ReviewLog["result"]): string {
+  return result
+    .split("_")
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function getSecondaryReasonOptions(primaryReason: string): string[] {
+  return mistakeTaxonomy.find((item) => item.primaryReason === primaryReason)?.secondaryReasons ?? [];
 }
 
 function formatTaskStatus(status: ReviewTask["status"]): string {
